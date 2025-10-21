@@ -11,23 +11,10 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- .envからキーを読み込む手動関数 ---
-def load_env_variables():
-    env_vars = {}
-    try:
-        with open('.env', 'r', encoding='utf-8') as f:
-            for line in f:
-                if '=' in line:
-                    key, value = line.strip().split('=', 1)
-                    env_vars[key.strip()] = value.strip().strip('"')
-        return env_vars
-    except FileNotFoundError:
-        return None
-
 # --- JST変換関数 ---
 def to_jst(utc_str):
     try:
-        utc_dt = datetime.fromisoformat(utc_str.replace('Z', '+00:00'))
+        utc_dt = datetime.fromisoformat(str(utc_str).replace('Z', '+00:00'))
         jst_tz = timezone(timedelta(hours=9))
         jst_dt = utc_dt.astimezone(jst_tz)
         return jst_dt.strftime('%Y-%m-%d %H:%M')
@@ -38,55 +25,48 @@ def to_jst(utc_str):
 st.title("OOG: 社労士向けAIアシスタント")
 st.caption("On/Off Boarding Genius - 入退社手続きと就業規則改定を、AIで劇的に効率化するツール")
 
-# 環境変数の読み込み
-env_variables = load_env_variables()
-api_key = env_variables.get("GEMINI_API_KEY") if env_variables else None
-supabase_url = env_variables.get("SUPABASE_URL") if env_variables else None
-supabase_key = env_variables.get("SUPABASE_KEY") if env_variables else None
-
-# APIキーとSupabase接続のチェック
-if not api_key or not supabase_url or not supabase_key:
-    st.error("APIキーまたはデータベースの設定が正しく読み込めていません。.envファイルを確認してください。")
+# --- Secretsからのキー読み込み（Streamlitの公式手法） ---
+try:
+    api_key = st.secrets["GEMINI_API_KEY"]
+    supabase_url = st.secrets["SUPABASE_URL"]
+    supabase_key = st.secrets["SUPABASE_KEY"]
+    supabase: Client = create_client(supabase_url, supabase_key)
+    st.success("APIキーとデータベースの接続を確認しました。")
+except Exception as e:
+    st.error(f"必要なキー情報が設定されていません。StreamlitのSecretsを確認してください。")
     st.stop()
 
-# Supabaseクライアントの初期化
-supabase: Client = create_client(supabase_url, supabase_key)
-
-st.success("APIキーとデータベースの接続を確認しました。")
-
 # --- 履歴表示 機能 ---
-if supabase:
-    with st.expander("📂 過去の実行履歴を表示する"):
-        history_col1, history_col2 = st.columns(2)
+with st.expander("📂 過去の実行履歴を表示する"):
+    history_col1, history_col2 = st.columns(2)
+    with history_col1:
+        st.subheader("入社・退職手続き 履歴")
+        try:
+            onboarding_history = supabase.table("onboarding_offboarding_records").select("created_at, procedure_type, employment_type, nationality").order("created_at", desc=True).limit(5).execute()
+            if onboarding_history.data:
+                for record in onboarding_history.data:
+                    st.markdown(f"**実行日時:** {to_jst(record['created_at'])}")
+                    st.markdown(f"- **手続き種別:** {record['procedure_type']} / **雇用形態:** {record['employment_type']} / **国籍:** {record['nationality']}")
+                    st.markdown("---")
+            else:
+                st.info("履歴はまだありません。")
+        except Exception as e:
+            st.warning(f"履歴の取得中にエラーが発生しました: {e}")
 
-        with history_col1:
-            st.subheader("入社・退職手続き 履歴")
-            try:
-                onboarding_history = supabase.table("onboarding_offboarding_records").select("created_at, procedure_type, employment_type, nationality").order("created_at", desc=True).limit(5).execute()
-                if onboarding_history.data:
-                    for record in onboarding_history.data:
-                        st.markdown(f"**実行日時:** {to_jst(record['created_at'])}")
-                        st.markdown(f"- **手続き種別:** {record['procedure_type']} / **雇用形態:** {record['employment_type']} / **国籍:** {record['nationality']}")
-                        st.markdown("---")
-                else:
-                    st.info("履歴はまだありません。")
-            except Exception as e:
-                st.warning(f"履歴の取得中にエラーが発生しました: {e}")
-
-        with history_col2:
-            st.subheader("就業規則改正 履歴")
-            try:
-                rule_history = supabase.table("rule_amendment_records").select("created_at, current_rule").order("created_at", desc=True).limit(5).execute()
-                if rule_history.data:
-                    for record in rule_history.data:
-                        st.markdown(f"**実行日時:** {to_jst(record['created_at'])}")
-                        with st.expander(f"改正した条文（冒頭）: {record['current_rule'][:20]}..."):
-                            st.text(record['current_rule'])
-                        st.markdown("---")
-                else:
-                    st.info("履歴はまだありません。")
-            except Exception as e:
-                st.warning(f"履歴の取得中にエラーが発生しました: {e}")
+    with history_col2:
+        st.subheader("就業規則改正 履歴")
+        try:
+            rule_history = supabase.table("rule_amendment_records").select("created_at, current_rule").order("created_at", desc=True).limit(5).execute()
+            if rule_history.data:
+                for record in rule_history.data:
+                    st.markdown(f"**実行日時:** {to_jst(record['created_at'])}")
+                    with st.expander(f"改正した条文（冒頭）: {record['current_rule'][:20]}..."):
+                        st.text(record['current_rule'])
+                    st.markdown("---")
+            else:
+                st.info("履歴はまだありません。")
+        except Exception as e:
+            st.warning(f"履歴の取得中にエラーが発生しました: {e}")
 
 # --- 機能のメインコンテナ ---
 col1, col2 = st.columns(2, gap="large")
@@ -134,7 +114,7 @@ if submitted:
 
 この従業員に必要な行政手続きを、手続き名(name), 提出期限(submission_deadline), 提出先(submission_to), 備考(note)をキーとするJSON形式でリストアップしてください。'''
                 payload = {
-                    "contents": [{"parts": [{"text": task_prompt}]}] ,
+                    "contents": [{"parts": [{"text": task_prompt}]}],
                     "generationConfig": {"temperature": 0.9, "topK": 1, "topP": 1, "maxOutputTokens": 8192, "stopSequences": []},
                     "safetySettings": [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"}, {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"}, {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"}, {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"}]
                 }
@@ -178,7 +158,7 @@ if submitted:
   }}
 ]
 ```'''
-                risk_payload = {"contents": [{"parts": [{"text": risk_check_prompt}]}] , "generationConfig": payload["generationConfig"], "safetySettings": payload["safetySettings"]}
+                risk_payload = {"contents": [{"parts": [{"text": risk_check_prompt}]}], "generationConfig": payload["generationConfig"], "safetySettings": payload["safetySettings"]}
                 response_risks = requests.post(url, json=risk_payload, timeout=120)
                 response_risks.raise_for_status()
                 result_json_risks = response_risks.json()
@@ -270,7 +250,7 @@ if rule_submitted:
 }}
 ```'''
                 rule_payload = {
-                    "contents": [{"parts": [{"text": rule_prompt}]}] ,
+                    "contents": [{"parts": [{"text": rule_prompt}]}],
                     "generationConfig": {"temperature": 0.7, "maxOutputTokens": 8192},
                     "safetySettings": [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"}, {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"}, {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"}, {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"}]
                 }
