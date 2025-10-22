@@ -5,3 +5,9 @@ supabase
 google-generativeai
 requests
 streamlit
+PyPDF2
+python-docx
+openpyxl
+google-cloud-vision
+pandas
+diff-match-patch
